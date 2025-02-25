@@ -65,8 +65,9 @@ class VGG16(nn.Module):
             nn.MaxPool2d(kernel_size = 2, stride = 2))
         self.fc = nn.Sequential(
             nn.Dropout(0.5),
-            nn.Linear(7*7*512, 4096),
-            nn.ReLU())
+            nn.Linear(512, 4096), 
+            nn.ReLU()
+        )
         self.fc1 = nn.Sequential(
             nn.Dropout(0.5),
             nn.Linear(4096, 4096),
@@ -75,6 +76,8 @@ class VGG16(nn.Module):
             nn.Linear(4096, num_classes))
         
     def forward(self, x):
+        if x.shape[1] == 1:  # If grayscale, repeat across channels
+            x = x.repeat(1, 3, 1, 1)  # Convert [B, 1, H, W] -> [B, 3, H, W]
         out = self.layer1(x)
         out = self.layer2(out)
         out = self.layer3(out)

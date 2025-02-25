@@ -8,6 +8,7 @@ def get_mnist_loaders(batch_size=64):
         root='./data',
         train=True,
         transform=transforms.Compose([
+            transforms.RandomRotation(degrees=70),
             transforms.Resize((32, 32)),
             transforms.ToTensor(),
             transforms.Normalize(mean=(0.1307,), std=(0.3081,))
@@ -34,13 +35,17 @@ def get_mnist_loaders(batch_size=64):
 def get_cifar10_loaders(batch_size=64):
     print("Grabbing Cifar-10 loaders")
     transform_train = transforms.Compose([
-        transforms.Resize((224, 224)),  # ✅ Resize to VGG16 expected input size
-        transforms.ToTensor(),
-        transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2470, 0.2435, 0.2616))
-    ])
+    transforms.Resize(64),
+    transforms.RandomResizedCrop(64, scale=(0.8, 1.0)),  # Randomly crop to 80-100% of original
+    transforms.RandomHorizontalFlip(),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+    transforms.RandomRotation(15),  # Small rotations to increase variability
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2470, 0.2435, 0.2616])
+])
 
     transform_test = transforms.Compose([
-        transforms.Resize((224, 224)),  # ✅ Resize test images as well
+        transforms.Resize(64),
         transforms.ToTensor(),
         transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2470, 0.2435, 0.2616))
     ])

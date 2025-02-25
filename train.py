@@ -6,9 +6,10 @@ import matplotlib.pyplot as plt
 from datasets import get_mnist_loaders, get_cifar10_loaders
 from models.lenet import LeNet5
 from models.vgg import VGG16
-# from models.resnet import ResNet18
+from models.resnet import ResNet18
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-def train(model, train_loader, test_loader, criterion, optimizer, device, num_epochs=10):
+def train(model, train_loader, test_loader, criterion, optimizer, scheduler, device, num_epochs=10):
     model.to(device)
     model.train()
 
@@ -37,17 +38,19 @@ def train(model, train_loader, test_loader, criterion, optimizer, device, num_ep
         train_loss = running_loss / len(train_loader)
         train_accuracy = 100 * correct / total
 
+        # Evaluate on the test set every epoch
+        test_loss, test_accuracy = evaluate(model, test_loader, criterion, device)
 
-        if ((epoch + 1) % 5 == 0 or epoch == 0):
-            train_losses.append(train_loss)
-            train_accuracies.append(train_accuracy)
-            test_loss, test_accuracy = evaluate(model, test_loader, criterion, device)
-            test_losses.append(test_loss)
-            test_accuracies.append(test_accuracy)
-            epochs_list.append(epoch + 1)
-            print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {train_loss:.4f}, Train Acc: {train_accuracy:.2f}%, Test Loss: {test_loss:.4f}, Test Acc: {test_accuracy:.2f}%")
-        else:
-            print(f"Epoch [{epoch+1}/{num_epochs}] - "f"Train Loss: {train_loss:.4f}, Train Acc: {train_accuracy:.2f}%")
+        train_losses.append(train_loss)
+        train_accuracies.append(train_accuracy)
+        test_losses.append(test_loss)
+        test_accuracies.append(test_accuracy)
+        epochs_list.append(epoch + 1)
+
+        print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {train_loss:.4f}, Train Acc: {train_accuracy:.2f}%, Test Loss: {test_loss:.4f}, Test Acc: {test_accuracy:.2f}%")
+
+        # Step the scheduler using test loss
+        scheduler.step(test_loss)
 
     return train_losses, test_losses, train_accuracies, test_accuracies, epochs_list
 
@@ -90,7 +93,7 @@ def main():
     print(f"Using device: {device}")
 
     if args.dataset == "mnist":
-        train_loader, test_loader = get_mnist_loaders(batch_size=32)
+        train_loader, test_loader = get_mnist_loaders(batch_size=64)
     elif args.dataset == "cifar10":
         train_loader, test_loader = get_cifar10_loaders(batch_size=64)
 
@@ -101,11 +104,15 @@ def main():
     elif args.model == "resnet18":
         model = ResNet18(num_classes=10)
     
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    # optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.003, momentum=0.9, weight_decay=5e-4)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=0.003, weight_decay=1e-3)  # Increase from 5e-4 to 1e-3
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
 
+    # Train the model
     train_losses, test_losses, train_accuracies, test_accuracies, epochs_list = train(
-        model, train_loader, test_loader, criterion, optimizer, device, num_epochs=20
+        model, train_loader, test_loader, criterion, optimizer, scheduler, device, num_epochs=40
     )
 
     plot_metrics(epochs_list, train_accuracies, test_accuracies, "Accuracy (%)", f"{args.model} Accuracy Over Epochs")
