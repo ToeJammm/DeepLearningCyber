@@ -7,11 +7,14 @@ from datasets import get_mnist_loaders, get_cifar10_loaders
 from models.lenet import LeNet5
 from models.vgg import VGG16
 from models.resnet import ResNet18
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import OneCycleLR
 
 def train(model, train_loader, test_loader, criterion, optimizer, scheduler, device, num_epochs=10):
     model.to(device)
     model.train()
+
+    scaler = torch.amp.GradScaler() if device.type == "cuda" else None  # Enable AMP only if CUDA
+    device_type = "cuda" if torch.cuda.is_available() else "cpu"  # Ensure correct string format
 
     train_losses, test_losses = [], []
     train_accuracies, test_accuracies = [], []
@@ -24,10 +27,18 @@ def train(model, train_loader, test_loader, criterion, optimizer, scheduler, dev
             images, labels = images.to(device), labels.to(device)
 
             optimizer.zero_grad()
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+            if device.type == "cuda":  # Use AMP only on CUDA
+                with torch.amp.autocast(device_type=device_type):
+                    outputs = model(images)
+                    loss = criterion(outputs, labels)
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:  # Regular precision for CPU or MPS
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
 
             running_loss += loss.item()
             _, predicted = torch.max(outputs, 1)
@@ -54,7 +65,10 @@ def train(model, train_loader, test_loader, criterion, optimizer, scheduler, dev
 
     return train_losses, test_losses, train_accuracies, test_accuracies, epochs_list
 
+
+
 def evaluate(model, test_loader, criterion, device):
+    model.to(device)
     model.eval()
     test_loss, correct, total = 0.0, 0, 0
 
@@ -73,6 +87,7 @@ def evaluate(model, test_loader, criterion, device):
     accuracy = 100 * correct / total
     return avg_loss, accuracy
 
+
 def plot_metrics(epochs, train_values, test_values, ylabel, title):
     plt.figure()
     plt.plot(epochs, train_values, label="Train", marker='o')
@@ -89,13 +104,19 @@ def main():
     parser.add_argument("--dataset", type=str, required=True, choices=["mnist", "cifar10"], help="Choose dataset")
     args = parser.parse_args()
 
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Using device: {device}")
+    print(f"CUDA Available: {torch.cuda.is_available()}")
+    print(f"CUDA Device Count: {torch.cuda.device_count()}")
+    print(f"CUDA Device Name: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A'}")
+
+
 
     if args.dataset == "mnist":
-        train_loader, test_loader = get_mnist_loaders(batch_size=64)
+        train_loader, test_loader = get_mnist_loaders(batch_size=64, num_workers=4, pin_memory=True)
     elif args.dataset == "cifar10":
-        train_loader, test_loader = get_cifar10_loaders(batch_size=64)
+        train_loader, test_loader = get_cifar10_loaders(batch_size=64, num_workers=4, pin_memory=True)
+
 
     if args.model == "lenet":
         model = LeNet5(num_classes=10)
@@ -104,11 +125,12 @@ def main():
     elif args.model == "resnet18":
         model = ResNet18(num_classes=10)
     
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-    # optimizer = optim.Adam(model.parameters(), lr=0.001)
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.003, momentum=0.9, weight_decay=5e-4)
-    # optimizer = torch.optim.Adam(model.parameters(), lr=0.003, weight_decay=1e-3)  # Increase from 5e-4 to 1e-3
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.08)
+    # optimizer = torch.optim.SGD(model.parameters(), lr=0.005, momentum=0.85, weight_decay=2e-3)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=2e-3)  # Increase from 5e-4 to 1e-3
+    scheduler = OneCycleLR(optimizer, max_lr=0.05, epochs=40, steps_per_epoch=len(train_loader))
+
 
     # Train the model
     train_losses, test_losses, train_accuracies, test_accuracies, epochs_list = train(
