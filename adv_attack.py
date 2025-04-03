@@ -12,8 +12,8 @@ import matplotlib.pyplot as plt
 def PGD(x, y, model, loss_fn, niter, epsilon, stepsize, randinit=True):
     x_adv = x.clone().detach().to(x.device)
     if randinit:
-        x_adv += torch.empty_like(x_adv).uniform_(-epsilon, epsilon)
-        x_adv = torch.clamp(x_adv, 0, 1)
+        x_adv += torch.empty_like(x_adv).uniform_(-epsilon, epsilon) #add random noise
+        x_adv = torch.clamp(x_adv, 0, 1) #clamp for normalized images
 
     x_adv.requires_grad = True
 

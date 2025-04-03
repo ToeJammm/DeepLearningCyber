@@ -22,6 +22,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, scheduler, dev
     train_losses, test_losses = [], []
     train_accuracies, test_accuracies = [], []
     epochs_list = []
+    adv_accuracies = []
 
     for epoch in range(num_epochs):
         running_loss, correct, total = 0.0, 0, 0
@@ -37,19 +38,21 @@ def train(model, train_loader, test_loader, criterion, optimizer, scheduler, dev
             optimizer.zero_grad()
             if device.type == "cuda":
                 with torch.amp.autocast(device_type=device_type):
-                    outputs = model(adv_images)
-                    loss = criterion(outputs, labels)
+                    outputs_adv = model(adv_images)
+                    outputs_clean = model(images)
+                loss = 0.5 * criterion(outputs_clean, labels) + 0.5 * criterion(outputs_adv, labels)
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else: 
-                outputs = model(adv_images)
-                loss = criterion(outputs, labels)
+                outputs_adv = model(adv_images)
+                outputs_clean = model(images)
+                loss = 0.5 * criterion(outputs_clean, labels) + 0.5 * criterion(outputs_adv, labels)
                 loss.backward()
                 optimizer.step()
 
             running_loss += loss.item()
-            _, predicted = torch.max(outputs, 1)
+            _, predicted = torch.max(outputs_clean, 1)
             correct += (predicted == labels).sum().item()
             total += labels.size(0)
 
@@ -59,11 +62,13 @@ def train(model, train_loader, test_loader, criterion, optimizer, scheduler, dev
 
         # Evaluate on the test set every epoch
         test_loss, test_accuracy = evaluate(model, test_loader, criterion, device)
+        adv_loss, adv_accuracy = evaluate_adv(model, test_loader, criterion, device)
 
         train_losses.append(train_loss)
         train_accuracies.append(train_accuracy)
         test_losses.append(test_loss)
         test_accuracies.append(test_accuracy)
+        adv_accuracies.append(adv_accuracy)
         epochs_list.append(epoch + 1)
 
         print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {train_loss:.4f}, Train Acc: {train_accuracy:.2f}%, Test Loss: {test_loss:.4f}, Test Acc: {test_accuracy:.2f}%")
@@ -71,7 +76,7 @@ def train(model, train_loader, test_loader, criterion, optimizer, scheduler, dev
         # Step the scheduler using test loss
         scheduler.step()
 
-    return train_losses, test_losses, train_accuracies, test_accuracies, epochs_list
+    return train_losses, test_losses, train_accuracies, test_accuracies, adv_accuracies, epochs_list
 
 
 
@@ -94,6 +99,19 @@ def evaluate(model, test_loader, criterion, device):
     avg_loss = test_loss / len(test_loader)
     accuracy = 100 * correct / total
     return avg_loss, accuracy
+
+def evaluate_adv(model, test_loader, criterion, device):
+    model.eval()
+    adv_correct, total = 0, 0
+    with torch.no_grad():
+        for images, labels in test_loader:
+            images, labels = images.to(device), labels.to(device)
+            adv_images = PGD(images, labels, model, criterion, niter=5, epsilon=0.03, stepsize=2/255, randinit=False)
+            outputs = model(adv_images)
+            _, predicted = torch.max(outputs, 1)
+            adv_correct += (predicted == labels).sum().item()
+            total += labels.size(0)
+    return 100 * adv_correct / total
 
 
 def plot_metrics(epochs, train_values, test_values, ylabel, title):
@@ -144,12 +162,13 @@ def main():
 
 
     # Train the model
-    train_losses, test_losses, train_accuracies, test_accuracies, epochs_list = train(
+    train_losses, test_losses, train_accuracies, test_accuracies, epochs_list, adv_accuracies = train(
         model, train_loader, test_loader, criterion, optimizer, scheduler, device, num_epochs=60 
     )
 
     plot_metrics(epochs_list, train_accuracies, test_accuracies, "Accuracy (%)", f"{args.model} Accuracy Over Epochs")
-    plot_metrics(epochs_list, train_losses, test_losses, "Loss", f"{args.model} Loss Over Epochs")
+    # plot_metrics(epochs_list, train_losses, test_losses, "Loss", f"{args.model} Loss Over Epochs")
+    plot_metrics(epochs_list, test_accuracies, adv_accuracies, "Accuracy (%)", f"{args.model} Adversarial Accuracy Over Epochs")
 
 
     save_model = input("Do you want to save the trained model? (y/n): ").strip().lower()
