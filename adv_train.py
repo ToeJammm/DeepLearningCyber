@@ -1,3 +1,4 @@
+
 import argparse
 import torch
 import torch.nn as nn
@@ -6,16 +7,17 @@ import matplotlib.pyplot as plt
 from datasets import get_mnist_loaders, get_cifar10_loaders
 from models.lenet import LeNet5
 from models.vgg import VGG16
-# from models.resnet import ResNet18
 from models.resnet18 import ResNet18
 from torch.optim.lr_scheduler import OneCycleLR, StepLR
+from adv_attack import PGD
+
 
 def train(model, train_loader, test_loader, criterion, optimizer, scheduler, device, num_epochs=10):
     model.to(device)
     model.train()
 
-    scaler = torch.amp.GradScaler() if device.type == "cuda" else None  
-    device_type = "cuda" if torch.cuda.is_available() else "cpu" 
+    scaler = torch.amp.GradScaler() if device.type == "cuda" else None
+    device_type = "cuda" if torch.cuda.is_available() else "cpu"
 
     train_losses, test_losses = [], []
     train_accuracies, test_accuracies = [], []
@@ -26,17 +28,22 @@ def train(model, train_loader, test_loader, criterion, optimizer, scheduler, dev
 
         for images, labels in train_loader:
             images, labels = images.to(device), labels.to(device)
+            
+            model.eval()
+            adv_images = PGD(images, labels, model, criterion,
+                             niter=5, epsilon=0.03,
+                             stepsize=2/255, randinit=True)
 
             optimizer.zero_grad()
-            if device.type == "cuda":  
+            if device.type == "cuda":
                 with torch.amp.autocast(device_type=device_type):
-                    outputs = model(images)
+                    outputs = model(adv_images)
                     loss = criterion(outputs, labels)
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else: 
-                outputs = model(images)
+                outputs = model(adv_images)
                 loss = criterion(outputs, labels)
                 loss.backward()
                 optimizer.step()
@@ -60,6 +67,8 @@ def train(model, train_loader, test_loader, criterion, optimizer, scheduler, dev
         epochs_list.append(epoch + 1)
 
         print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {train_loss:.4f}, Train Acc: {train_accuracy:.2f}%, Test Loss: {test_loss:.4f}, Test Acc: {test_accuracy:.2f}%")
+
+        # Step the scheduler using test loss
         scheduler.step()
 
     return train_losses, test_losses, train_accuracies, test_accuracies, epochs_list
@@ -123,19 +132,20 @@ def main():
         model = VGG16(num_classes=10)
     elif args.model == "resnet18":
         model = ResNet18(num_classes=10)
+
     
+
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9, weight_decay=5e-4)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30, 45], gamma=0.1)
     
-  
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0005, weight_decay=1e-1)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1) 
+    criterion = nn.CrossEntropyLoss() 
     # optimizer = optim.SGD(model.parameters(), lr=0.01, #good for Resnet18
     #                   momentum=0.9, weight_decay=5e-4)
 
 
     # Train the model
     train_losses, test_losses, train_accuracies, test_accuracies, epochs_list = train(
-        model, train_loader, test_loader, criterion, optimizer, scheduler, device, num_epochs=50 
+        model, train_loader, test_loader, criterion, optimizer, scheduler, device, num_epochs=60 
     )
 
     plot_metrics(epochs_list, train_accuracies, test_accuracies, "Accuracy (%)", f"{args.model} Accuracy Over Epochs")
@@ -152,3 +162,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+

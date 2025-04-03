@@ -1,5 +1,5 @@
 #!/bin/bash
 
 echo "Starting training..."
-python train.py --model resnet18 --dataset cifar10
+python train.py --model lenet --dataset mnist
 echo "Training complete!"
